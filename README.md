@@ -1,1 +1,4 @@
-# Red_Bull_Air_Race
+# race-game-threejs
+A simple race game using three.js
+
+[click here to play](http://noiron.github.io/race-game-threejs/)
