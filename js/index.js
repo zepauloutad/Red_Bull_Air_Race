@@ -1,208 +1,451 @@
-var container, scene, camera, renderer, controls;
-var keyboard = new THREEx.KeyboardState();
-var clock = new THREE.Clock;
+let container, scene, camera, renderer, controls;
+let orthoCamera;
+let activeCamera;
+let keyboard = new THREEx.KeyboardState();
+let clock = new THREE.Clock();
+let airplane;
+let collideMeshList = [];
+let toruses = [];
+let message = document.getElementById("message");
+let crash = false;
+let score = 0;
+let scoreText = document.getElementById("score");
+let id = 0;
+let crashId = "";
+let lastCrashId = "";
+let flashlightOn = false;
+let musicPlaying = true;
 
-var movingCube;
-var collideMeshList = [];
-var cubes = [];
-var message = document.getElementById("message");
-var crash = false;
-var score = 0;
-var scoreText = document.getElementById("score");
-var id = 0;
-var crashId = "";
-var lastCrashId = "";
+// Create AudioContext
+const audioContext = new AudioContext();
+// Create GainNodes
+const gainNodeBackground = audioContext.createGain();
+const gainNodeAirplane = audioContext.createGain();
 
 init();
 animate();
+createAirplane();
+
+function createAirplane() {
+  const airplane = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.25, 0.5, 5, 32),
+    new THREE.MeshPhongMaterial({ color: 0x00e8ff })
+  );
+  body.rotation.x = Math.PI / 2;
+  body.position.z = 1.5;
+  body.name = "body";
+  airplane.add(body);
+
+  // Add top wing
+  const topWing = new THREE.Mesh(
+    new THREE.BoxGeometry(4, 0.2, 1),
+    new THREE.MeshPhongMaterial({ color: 0xffff00 })
+  );
+  topWing.position.set(0, 0.6, 1.5);
+  airplane.add(topWing);
+
+  // Add bottom wing
+  const bottomWing = new THREE.Mesh(
+    new THREE.BoxGeometry(4, 0.2, 1),
+    new THREE.MeshPhongMaterial({ color: 0xffff00 })
+  );
+  bottomWing.position.set(0, -0.6, 1.5);
+  airplane.add(bottomWing);
+
+  // Add biplane spars
+  for (let i = -1; i <= 1; i += 2) {
+    const sparGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1.2);
+    const sparMaterial = new THREE.MeshPhongMaterial({ color: 0x00e8ff });
+    const spar = new THREE.Mesh(sparGeometry, sparMaterial);
+    spar.rotation.y = 90;
+    spar.position.set(i * 1.5, 0, 1.5);
+    airplane.add(spar);
+
+    // Add second pair of spars closer to the plane
+    const innerSparGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1.2);
+    const innerSparMaterial = new THREE.MeshPhongMaterial({ color: 0x00e8ff });
+    const innerSpar = new THREE.Mesh(innerSparGeometry, innerSparMaterial);
+    innerSpar.rotation.z = 50;
+    innerSpar.position.set(i * 1.5, 0, 1.5);
+    airplane.add(innerSpar);
+  }
+
+  // Add elevator
+  const elevator = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 0.2, 1),
+    new THREE.MeshPhongMaterial({ color: 0xffff00 })
+  );
+  elevator.position.set(0, 0.1, 4);
+  airplane.add(elevator);
+
+  // Add rudder
+  const rudder = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.8, 1),
+    new THREE.MeshPhongMaterial({ color: 0xffff00 })
+  );
+  rudder.position.set(0, 0.3, 4);
+  airplane.add(rudder);
+
+  // Add propeller
+  const propeller = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 2, 0.2),
+    new THREE.MeshPhongMaterial({ color: 0xcccccc })
+  );
+  propeller.position.set(0, -0.3, -2.5);
+  propeller.name = "propeller";
+  airplane.add(propeller);
+
+  return airplane;
+}
+
+function createFlashlight() {
+  let flashlight = new THREE.SpotLight(0xffffff, 1);
+  flashlight.position.set(0, 0, 0);
+  flashlight.castShadow = true;
+  flashlight.name = "flashlight";
+
+  // Change the following parameters to customize the flashlight
+  flashlight.angle = Math.PI / 4;
+  flashlight.penumbra = 0.2;
+  flashlight.distance = 200;
+  flashlight.decay = 2;
+
+  // Add the flashlight to the child body of the plane
+  airplane.getObjectByName("body").add(flashlight);
+  console.log(flashlight);
+}
+
+function toggleFlashlight() {
+  // Get the flashlight object
+  const body = airplane.getObjectByName("body");
+  const flashlight = body.getObjectByName("flashlight");
+
+  // Toggle the flashlight on or off
+  if (flashlightOn) {
+    flashlight.intensity = 0; // Turn off the flashlight
+    flashlightOn = false;
+  } else {
+    flashlight.intensity = 10; // Turn on the flashlight
+    flashlightOn = true;
+  }
+  console.log("toggleFlashlight() called");
+}
+
+
+function loadBackgroundMusic() {
+  // Load audio file
+  fetch("/assets/sound/backgroundMusic.mp3")
+    .then((response) => response.arrayBuffer())
+    .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+    .then((audioBuffer) => {
+      // Create AudioBufferSourceNode
+      source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.loop = true;
+
+      gainNodeBackground.gain.value = 0.2;
+
+      // Connect nodes
+      source.connect(gainNodeBackground);
+      gainNodeBackground.connect(audioContext.destination);
+
+      // Start playback
+      source.start();
+    });
+}
+
+function loadAirplaneSound() {
+  // Load audio file
+  fetch("/assets/sound/airplanesound.mp3")
+    .then((response) => response.arrayBuffer())
+    .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+    .then((audioBuffer) => {
+      // Create AudioBufferSourceNode
+      source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.loop = true;
+
+      gainNodeAirplane.gain.value = 0.5;
+
+      // Connect nodes
+      source.connect(gainNodeAirplane);
+      gainNodeAirplane.connect(audioContext.destination);
+
+      // Start playback
+      source.start();
+    });
+}
+
+// Create a new function called toggleMusic that will toggle the music on and off
+function toggleMusic() {
+  if (musicPlaying) {
+    gainNode.gain.value = 0; // Turn off the music
+    musicPlaying = false;
+  } else {
+    gainNode.gain.value = 0.1; // Turn on the music
+    musicPlaying = true;
+  }
+}
+function onKeyDown(event) {
+  if (event.keyCode === 76) {
+    // "L" key
+    toggleFlashlight();
+  } else if (event.keyCode === 84) {
+    // "T" key
+    if (activeCamera === camera) {
+      activeCamera = orthoCamera;
+    } else {
+      activeCamera = camera;
+    }
+  } else if (event.keyCode === 77) {
+    // "M" key
+    toggleMusic();
+  }
+}
+
+function updateFlashlightPosition() {
+  const body = airplane.getObjectByName("body");
+  const flashlight = body.getObjectByName("flashlight");
+
+  if (body) {
+    // Update the position of the flashlight based on the body's position
+    flashlight.position.copy(body.getWorldPosition());
+  }
+}
+
+
 
 function init() {
-    // Scene
-    scene = new THREE.Scene();
-    // Camera
-    var screenWidth = window.innerWidth;
-    var screenHeight = window.innerHeight;
-    camera = new THREE.PerspectiveCamera(45, screenWidth / screenHeight, 1, 20000);
-    camera.position.set(0, 170, 400);
+  // Scene
+  scene = new THREE.Scene();
+  backgroundmusic = loadBackgroundMusic();
+  airplaneSound = loadAirplaneSound();
 
-    // Renderer
-    if (Detector.webgl) {
-        renderer = new THREE.WebGLRenderer({ antialias: true });
-    } else {
-        renderer = new THREE.CanvasRenderer();
-    }
-    renderer.setSize(screenWidth * 0.85, screenHeight * 0.85);
-    container = document.getElementById("ThreeJS");
-    container.appendChild(renderer.domElement);
+  document.addEventListener("keydown", onKeyDown, false);
 
-    THREEx.WindowResize(renderer, camera);
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
+  // Perspective Camera
+  let screenWidth = window.innerWidth;
+  let screenHeight = window.innerHeight;
+  camera = new THREE.PerspectiveCamera(
+    45,
+    screenWidth / screenHeight,
+    1,
+    20000
+  );
+  camera.position.set(0, 170, 400);
 
-    geometry = new THREE.Geometry();
-    geometry.vertices.push(new THREE.Vector3(-250, -1, -3000));
-    geometry.vertices.push(new THREE.Vector3(-300, -1, 200));
-    material = new THREE.LineBasicMaterial({
-        color: 0x6699FF, linewidth: 5, fog: true
-    });
-    var line1 = new THREE.Line(geometry, material);
-    scene.add(line1);
-    geometry = new THREE.Geometry();
-    geometry.vertices.push(new THREE.Vector3(250, -1, -3000));
-    geometry.vertices.push(new THREE.Vector3(300, -1, 200));
-    var line2 = new THREE.Line(geometry, material);
-    scene.add(line2);
+  //Orthographic Camera
+
+  orthoCamera = new THREE.OrthographicCamera(
+    window.innerWidth / -2,
+    window.innerWidth / 2,
+    window.innerHeight / 2,
+    window.innerHeight / -2,
+    1,
+    20000
+  );
+  orthoCamera.position.set(0, 170, 400);
+
+  activeCamera = camera;
+
+  // Renderer
+  if (Detector.webgl) {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+  } else {
+    renderer = new THREE.CanvasRenderer();
+  }
+  renderer.setSize(screenWidth, screenHeight);
+  container = document.getElementById("ThreeJS");
+  container.appendChild(renderer.domElement);
+
+  THREEx.WindowResize(renderer, camera);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
 
 
-    var cubeGeometry = new THREE.CubeGeometry(50, 25, 60, 5, 5, 5);
-    var wireMaterial = new THREE.MeshBasicMaterial({
-        color: 0x00ff00,
-        wireframe: true
-    });
 
-    movingCube = new THREE.Mesh(cubeGeometry, wireMaterial);
-    //            movingCube = new THREE.Mesh(cubeGeometry, material);
-    //            movingCube = new THREE.BoxHelper(movingCube);
-    movingCube.position.set(0, 25, -20);
-    scene.add(movingCube);
+  // Add directional light
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 20);
+  directionalLight.position.set(1, 1, 1); // Set the position of the light
+  scene.add(directionalLight);
+
+  // Ambient Light
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1); // Color: white, Intensity: 0.5
+  scene.add(ambientLight);
+
+  //Lines
+  let geometry = new THREE.Geometry();
+  geometry.vertices.push(new THREE.Vector3(-250, -1, -3000));
+  geometry.vertices.push(new THREE.Vector3(-300, -1, 200));
+  let material = new THREE.LineBasicMaterial({
+    color: 0x6699ff,
+    linewidth: 5,
+    fog: true,
+  });
+  //line 1
+  let line1 = new THREE.Line(geometry, material);
+  scene.add(line1);
+  geometry = new THREE.Geometry();
+  geometry.vertices.push(new THREE.Vector3(250, -1, -3000));
+  geometry.vertices.push(new THREE.Vector3(300, -1, 200));
+  //line 2
+  let line2 = new THREE.Line(geometry, material);
+  scene.add(line2);
+
+  airplane = createAirplane();
+  airplane.position.set(0, 25, -20);
+  airplane.scale.set(45, 45, 45);
+  scene.add(airplane);
+  createFlashlight();
 }
 
 function animate() {
-    requestAnimationFrame(animate);
-    update();
-    renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+  update();
+  updateFlashlightPosition();
+  // Render main view
+  renderer.render(scene, activeCamera);
 
+  airplane.getObjectByName("propeller").rotation.z += 100;
+
+  // Add rotation and movement to toruses
+  toruses.forEach((torus) => {
+    torus.rotation.y += 0.006;
+    torus.position.x += Math.sin(torus.position.z / 100) * 0.5;
+    torus.position.y += Math.sin(torus.position.z / 100) * 0.5;
+  });
+
+  // Animate propeller
 }
 
 function update() {
-    var delta = clock.getDelta();
-    var moveDistance = 200 * delta;
-    //console.log(moveDistance);
-    var rotateAngle = Math.PI / 2 * delta;
+  let delta = clock.getDelta();
+  let moveDistance = 200 * delta;
 
-    //            if (keyboard.pressed("A")) {
-    //                camera.rotation.z -= 0.2 * Math.PI / 180;
-    //                console.log("press A")
-    //            }
-    //            if (keyboard.pressed("D")) {
-    //                movingCube.rotation.y += rotateAngle;
-    //            }
-
-    if (keyboard.pressed("left") || keyboard.pressed("A")) {
-        if (movingCube.position.x > -270)
-            movingCube.position.x -= moveDistance;
-        if (camera.position.x > -150) {
-            camera.position.x -= moveDistance * 0.6;
-            if (camera.rotation.z > -5 * Math.PI / 180) {
-                camera.rotation.z -= 0.2 * Math.PI / 180;
-            }
-        }
+  if (keyboard.pressed("left") || keyboard.pressed("A")) {
+    if (airplane.position.x > -270) airplane.position.x -= moveDistance;
+    if (camera.position.x > -150) {
+      camera.position.x -= moveDistance * 0.6;
+      if (camera.rotation.z > (-5 * Math.PI) / 180) {
+        camera.rotation.z -= (0.2 * Math.PI) / 180;
+      }
     }
-    if (keyboard.pressed("right") || keyboard.pressed("D")) {
-        if (movingCube.position.x < 270)
-            movingCube.position.x += moveDistance;
-        if (camera.position.x < 150) {
-            camera.position.x += moveDistance * 0.6;
-            if (camera.rotation.z < 5 * Math.PI / 180) {
-                camera.rotation.z += 0.2 * Math.PI / 180;
-            }
-        }
+  }
+  if (keyboard.pressed("right") || keyboard.pressed("D")) {
+    if (airplane.position.x < 270) airplane.position.x += moveDistance;
+    if (camera.position.x < 150) {
+      camera.position.x += moveDistance * 0.6;
+      if (camera.rotation.z < (5 * Math.PI) / 180) {
+        camera.rotation.z += (0.2 * Math.PI) / 180;
+      }
     }
-    if (keyboard.pressed("up") || keyboard.pressed("W")) {
-        movingCube.position.z -= moveDistance;
-    }
-    if (keyboard.pressed("down") || keyboard.pressed("S")) {
-        movingCube.position.z += moveDistance;
-    }
+  }
+  if (keyboard.pressed("up") || keyboard.pressed("W")) {
+    airplane.position.z -= moveDistance;
+  }
+  if (keyboard.pressed("down") || keyboard.pressed("S")) {
+    airplane.position.z += moveDistance;
+  }
 
-    if (!(keyboard.pressed("left") || keyboard.pressed("right") ||
-        keyboard.pressed("A") || keyboard.pressed("D"))) {
-        delta = camera.rotation.z;
-        camera.rotation.z -= delta / 10;
-    }
+  if (
+    !(
+      keyboard.pressed("left") ||
+      keyboard.pressed("right") ||
+      keyboard.pressed("A") ||
+      keyboard.pressed("D")
+    )
+  ) {
+    delta = camera.rotation.z;
+    camera.rotation.z -= delta / 10;
+  }
 
+  let originPoint = airplane.position.clone();
 
-    var originPoint = movingCube.position.clone();
+  for (let i = 0; i < airplane.children.length; i++) {
+    let child = airplane.children[i];
+    for (
+      let vertexIndex = 0;
+      vertexIndex < child.geometry.vertices.length;
+      vertexIndex++
+    ) {
+      let localVertex = child.geometry.vertices[vertexIndex].clone();
+      let globalVertex = localVertex.applyMatrix4(child.matrixWorld);
+      let directionVector = globalVertex.sub(airplane.position);
 
-    for (var vertexIndex = 0; vertexIndex < movingCube.geometry.vertices.length; vertexIndex++) {
-        var localVertex = movingCube.geometry.vertices[vertexIndex].clone();
-
-        var globalVertex = localVertex.applyMatrix4(movingCube.matrix);
-        var directionVector = globalVertex.sub(movingCube.position);
-
-        var ray = new THREE.Raycaster(originPoint, directionVector.clone().normalize());
-        var collisionResults = ray.intersectObjects(collideMeshList);
-        if (collisionResults.length > 0 && collisionResults[0].distance < directionVector.length()) {
-            crash = true;
-            crashId = collisionResults[0].object.name;
-            break;
-        }
+      let ray = new THREE.Raycaster(
+        originPoint,
+        directionVector.clone().normalize()
+      );
+      let collisionResults = ray.intersectObjects(collideMeshList);
+      if (
+        collisionResults.length > 0 &&
+        collisionResults[0].distance < directionVector.length()
+      ) {
+        crashId = collisionResults[0].object.name;
+        crash = true;
+        break;
+      } else {
         crash = false;
+      }
     }
 
     if (crash) {
-        movingCube.material.color.setHex(0x346386);
-        console.log("Crash");
-        if (crashId !== lastCrashId) {
-            score -= 100;
-            lastCrashId = crashId;
-        }
-
-        document.getElementById('explode_sound').play()
-    } else {
-        //            message.innerText = "Safe";
-        movingCube.material.color.setHex(0x00ff00);
+      console.log("Crash");
+      if (crashId !== lastCrashId) {
+        score -= 10;
+        lastCrashId = crashId;
+      }
+      // document.getElementById('explode_sound').play()
     }
 
-    if (Math.random() < 0.03 && cubes.length < 30) {
-        makeRandomCube();
+    if (Math.random() < 0.03 && toruses.length < 1) {
+      makeRandomTorus();
     }
 
-    for (i = 0; i < cubes.length; i++) {
-        if (cubes[i].position.z > camera.position.z) {
-            scene.remove(cubes[i]);
-            cubes.splice(i, 1);
-            collideMeshList.splice(i, 1);
-        } else {
-            cubes[i].position.z += 10;
-        }
+    for (let i = 0; i < toruses.length; i++) {
+      if (toruses[i].position.z > camera.position.z) {
+        scene.remove(toruses[i]);
+        toruses.splice(i, 1);
+        collideMeshList.splice(i, 1);
+      } else {
+        toruses[i].position.z += 3;
+      }
     }
 
-    score += 0.1;
-    scoreText.innerText = "Score:" + Math.floor(score);
+    score += 0.01;
+    scoreText.innerText = "Score: " + Math.floor(score);
+  }
 
-}
-// 
-function getRandomArbitrary(min, max) {
+  function getRandomArbitrary(min, max) {
     return Math.random() * (max - min) + min;
-}
+  }
 
-function getRandomInt(min, max) {
+  function getRandomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1) + min);
-}
+  }
 
+  function makeRandomTorus() {
+    let a = getRandomInt(150, 200),
+      b = getRandomInt(40, 80),
+      c = getRandomInt(10, 30),
+      d = 20;
 
-function makeRandomCube() {
-    var a = 1 * 50,
-        b = getRandomInt(1, 3) * 50,
-        c = 1 * 50;
-    var geometry = new THREE.CubeGeometry(a, b, c);
-    var material = new THREE.MeshBasicMaterial({
-        color: Math.random() * 0xffffff,
-        size: 3
+    let geometry = new THREE.TorusGeometry(a, b, c, d);
+
+    let material = new THREE.MeshBasicMaterial({
+      color: Math.random() * 0xffffff,
     });
 
+    let object = new THREE.Mesh(geometry, material);
 
-    var object = new THREE.Mesh(geometry, material);
-    var box = new THREE.BoxHelper(object);
-    box.material.color.setHex(0xff0000);
-
-    box.position.x = getRandomArbitrary(-250, 250);
-    box.position.y = 1 + b / 2;
-    box.position.z = getRandomArbitrary(-800, -1200);
-    cubes.push(box);
-    box.name = "box_" + id;
+    object.position.x = getRandomArbitrary(-250, 250);
+    object.position.y = b / 2;
+    object.position.z = getRandomArbitrary(-2500, -3500);
+    toruses.push(object);
+    object.name = "torus_" + id;
     id++;
-    collideMeshList.push(box);
+    collideMeshList.push(object);
 
-    scene.add(box);
+    scene.add(object);
+  }
 }
